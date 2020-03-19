@@ -113,7 +113,7 @@ def encode_img(im, xobj, use_jpg=True, quality=95, thumb_size=128,
 
 def optimize_pdf(filename, output, encode_params):
     pdf = pdfrw.PdfReader(filename)
-    for p, page in enumerate(pdf.pages):
+    for p, page in enumerate(pdf.pages, 1):
         print(p)
         xobjs = page['/Resources'].get('/XObject')
         if not xobjs:
@@ -123,7 +123,7 @@ def optimize_pdf(filename, output, encode_params):
             if im is None:
                 continue
             xobjs[name] = encode_img(im, obj, **encode_params)
-            print(xobjs[name]['/Filter'])
+            #print(xobjs[name]['/Filter'])
     writer = pdfrw.PdfWriter(output, trailer=pdf)
     writer.write()
 
@@ -140,8 +140,8 @@ def main(argv):
         "-g", "--grey-cutoff", type=float, default=1,
         help="Grey image threshold, unit is intensity (0-255), default 1.0")
     parser.add_argument(
-        "-b", "--bw-ratio", type=float, default=0.99,
-        help="Black&White threshold, range 0-1, default 0.99")
+        "-b", "--bw-ratio", type=float, default=0.92,
+        help="Black&White threshold, range 0-1, default 0.92")
     parser.add_argument(
         "-s", "--bw-supersample", type=float, default=1.5,
         help="Rate of supersampling before converting to Black&White images, default 1x (off)")
