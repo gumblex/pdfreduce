@@ -85,18 +85,17 @@ def encode_xobj(im, xobj, img_format, **kwargs):
 def encode_img(im, xobj, use_jpg=True, quality=95, thumb_size=128,
                grey_cutoff=1, bw_ratio=0.99, bw_supersample=1, low=10, high=40):
     orig_size = len(xobj.stream)
-    out_im = im
-    if low or high:
-        pixels = np.array(im)
-        pixels = np.where(pixels<=low, 0, pixels)
-        pixels = np.where(pixels>=(255-high), 255, pixels)
-        out_im = Image.fromarray(pixels)
     out_im = imgautocompress.auto_downgrade(
-        out_im, thumb_size, grey_cutoff, bw_ratio, bw_supersample)
+        im, thumb_size, grey_cutoff, bw_ratio, bw_supersample)
     width, height = out_im.size
     if out_im.mode == '1':
         return encode_xobj(out_im, xobj, 'group4')
-    elif out_im.mode[0] == 'L':
+    if low or high:
+        pixels = np.array(out_im)
+        pixels = np.where(pixels<=low, 0, pixels)
+        pixels = np.where(pixels>=(255-high), 255, pixels)
+        out_im = Image.fromarray(pixels)
+    if out_im.mode[0] == 'L':
         return encode_xobj(out_im, xobj, 'png')
     if im.format.startswith('JPEG') or not use_jpg:
         xobj_new = encode_xobj(out_im, xobj, 'png')
