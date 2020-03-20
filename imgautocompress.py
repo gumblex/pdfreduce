@@ -65,8 +65,6 @@ def auto_downgrade(pil_img, thumb_size=128, grey_cutoff=1, bw_ratio=0.99, bw_sup
         return pil_img
     hist = pil_img.histogram()[:256]
     if np.average(_PIXWEIGHT, weights=hist) > bw_ratio:
-        #threshold = otsu_threshold(hist)
-        #pil_img = pil_img.point(lambda p: p > threshold and 255)
         if bw_supersample != 1:
             width, height = pil_img.size
             width = round(width * bw_supersample)
@@ -74,6 +72,9 @@ def auto_downgrade(pil_img, thumb_size=128, grey_cutoff=1, bw_ratio=0.99, bw_sup
             scaled = pil_img.resize((width, height), resample=Image.BICUBIC)
         else:
             scaled = pil_img
+        threshold = otsu_threshold(hist)
+        if 50 < threshold < 250:  # resonable range
+            scaled = scaled.point(lambda p: p > threshold and 255)
         return scaled.convert('1', dither=Image.NONE)
     if bands[-1] == 'A':
         return pil_img.convert('L')
