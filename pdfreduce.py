@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import io
+import os
 import sys
 import zlib
 import argparse
@@ -13,6 +14,9 @@ import numpy as np
 from PIL import Image, TiffImagePlugin
 
 import imgautocompress
+
+
+__version__ = '0.2'
 
 
 def xobj_getimg(obj):
@@ -37,11 +41,13 @@ def xobj_getimg(obj):
         return Image.frombytes(mode, size, data)
 
 
-def encode_xobj(im, xobj, img_format, **kwargs):
+def encode_xobj(im, xobj, name, img_format, **kwargs):
     N = pdfrw.PdfName
     buf = io.BytesIO()
     xobj_new = xobj.copy()
     width, height = im.size
+    if name:
+        xobj_new[N('Name')] = name
     xobj_new[N('Width')] = width
     xobj_new[N('Height')] = height
     xobj_new[N('BitsPerComponent')] = 8
@@ -82,68 +88,84 @@ def encode_xobj(im, xobj, img_format, **kwargs):
     return xobj_new
 
 
-def encode_img(im, xobj, use_jpg=True, quality=95, thumb_size=128,
+def encode_img(im, xobj, name=None, use_jpg=True, quality=95, thumb_size=128,
                grey_cutoff=1, bw_ratio=0.99, bw_supersample=1, low=10, high=40):
     orig_size = len(xobj.stream)
     out_im = imgautocompress.auto_downgrade(
         im, thumb_size, grey_cutoff, bw_ratio, bw_supersample)
     width, height = out_im.size
     if out_im.mode == '1':
-        return encode_xobj(out_im, xobj, 'group4')
+        return encode_xobj(out_im, xobj, name, 'group4')
     if low or high:
         pixels = np.array(out_im)
         pixels = np.where(pixels<=low, 0, pixels)
         pixels = np.where(pixels>=(255-high), 255, pixels)
         out_im = Image.fromarray(pixels)
     if out_im.mode[0] == 'L':
-        return encode_xobj(out_im, xobj, 'png')
+        return encode_xobj(out_im, xobj, name, 'png')
     if im.format.startswith('JPEG') or not use_jpg:
-        xobj_new = encode_xobj(out_im, xobj, 'png')
+        xobj_new = encode_xobj(out_im, xobj, name, 'png')
     else:
-        xobj_new = encode_xobj(out_im, xobj, 'jpg', quality=95, optimize=True)
+        xobj_new = encode_xobj(
+            out_im, xobj, name, 'jpg', quality=95, optimize=True)
     if len(xobj_new.stream) > orig_size:
         if out_im.mode == im.mode:
             return xobj
         else:
-            return encode_xobj(out_im, xobj, 'png')
+            return encode_xobj(out_im, xobj, name, 'png')
     else:
         return xobj_new
 
 
-def optimize_pdf(filename, output, encode_params):
-    pdf = pdfrw.PdfReader(filename)
-    for p, page in enumerate(pdf.pages, 1):
-        print(p)
-        xobjs = page['/Resources'].get('/XObject')
-        if not xobjs:
+def _optimize_xobjs(xobjs, encode_params):
+    for name, obj in xobjs.items():
+        im = xobj_getimg(obj)
+        if im is None:
             continue
-        for name, obj in xobjs.items():
-            im = xobj_getimg(obj)
-            if im is None:
+        xobjs[name] = encode_img(im, obj, name, **encode_params)
+        #print(xobjs[name]['/Filter'])
+
+
+def optimize_pdf(filename, output, encode_params, parallel=None):
+    pdf = pdfrw.PdfReader(filename)
+    parallel = parallel or os.cpu_count()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as executor:
+        futures = []
+        completed = 0
+        for page in pdf.pages:
+            xobjs = page['/Resources'].get('/XObject')
+            if not xobjs:
                 continue
-            xobjs[name] = encode_img(im, obj, **encode_params)
-            #print(xobjs[name]['/Filter'])
+            futures.append(executor.submit(_optimize_xobjs, xobjs, encode_params))
+        total = len(futures)
+        for fut in concurrent.futures.as_completed(futures):
+            completed += 1
+            print('%d/%d %d%%\r' % (completed, total, 100*completed/total), end='')
+        print('Completed. Writing pdf...')
     writer = pdfrw.PdfWriter(output, trailer=pdf)
     writer.write()
+
 
 def main(argv):
     parser = argparse.ArgumentParser(description="Reduce size of images in PDF files.")
     parser.add_argument(
-        "-j", "--use-jpg", action='store_true', help="Use JPEG to encode images")
+        "-j", "--jobs", type=int, default=0, help="Parallel job number")
+    parser.add_argument(
+        "-J", "--use-jpg", action='store_true', help="Use JPEG to encode images")
     parser.add_argument(
         "-q", "--quality", type=int, default=95, help="JPEG quality, default 95")
     parser.add_argument(
-        "-t", "--thumb-size", type=int, default=128,
+        "-t", "--thumb-size", type=int, default=128, metavar='SIZE',
         help="Thunbnail size for checking image type, default 128")
     parser.add_argument(
-        "-g", "--grey-cutoff", type=float, default=1,
+        "-g", "--grey-cutoff", type=float, default=1, metavar='X',
         help="Grey image threshold, unit is intensity (0-255), default 1.0")
     parser.add_argument(
-        "-b", "--bw-ratio", type=float, default=0.92,
+        "-b", "--bw-ratio", type=float, default=0.92, metavar='X',
         help="Black&White threshold, range 0-1, default 0.92")
     parser.add_argument(
-        "-s", "--bw-supersample", type=float, default=1.5,
-        help="Rate of supersampling before converting to Black&White images, default 1x (off)")
+        "-s", "--bw-supersample", type=float, default=1.5, metavar='X',
+        help="Rate of supersampling before converting to Black&White images, default 1.5x")
     parser.add_argument(
         "-i", "--low", type=float, default=10,
         help="Set pixels with intensity [0, x] to 0, default 10")
