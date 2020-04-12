@@ -38,8 +38,6 @@ def xobj_getimg(obj):
     if ofilter == '/FlateDecode':
         return Image.frombytes(mode, size, zlib.decompress(data))
     elif ofilter in ('/DCTDecode', '/JPXDecode'):
-        with open('a.jp2', 'wb') as f:
-            f.write(data)
         return Image.open(io.BytesIO(data))
     else:  # skip CCITTFaxDecode and JBIG2Decode
         return
