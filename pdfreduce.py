@@ -16,7 +16,7 @@ from PIL import Image, TiffImagePlugin
 import imgautocompress
 
 
-__version__ = '0.2'
+__version__ = '0.3'
 
 
 def xobj_getimg(obj):
@@ -30,15 +30,19 @@ def xobj_getimg(obj):
         mode = "L"
     else:  # can't support other color spaces
         return
-    if '/Filter' in obj:
-        if obj['/Filter'] == '/FlateDecode':
-            return Image.frombytes(mode, size, zlib.decompress(data))
-        elif obj['/Filter'] in ('/DCTDecode', '/JPXDecode'):
-            return Image.open(io.BytesIO(data))
-        else:  # skip CCITTFaxDecode and JBIG2Decode
-            return
-    else:
+    ofilter = obj.get('/Filter')
+    if not ofilter:
         return Image.frombytes(mode, size, data)
+    if isinstance(ofilter, list) and len(ofilter) == 1:
+        ofilter = ofilter[0]
+    if ofilter == '/FlateDecode':
+        return Image.frombytes(mode, size, zlib.decompress(data))
+    elif ofilter in ('/DCTDecode', '/JPXDecode'):
+        with open('a.jp2', 'wb') as f:
+            f.write(data)
+        return Image.open(io.BytesIO(data))
+    else:  # skip CCITTFaxDecode and JBIG2Decode
+        return
 
 
 def encode_xobj(im, xobj, name, img_format, **kwargs):
@@ -117,13 +121,20 @@ def encode_img(im, xobj, name=None, use_jpg=True, quality=95, thumb_size=128,
         return xobj_new
 
 
-def _optimize_xobjs(xobjs, encode_params):
-    for name, obj in xobjs.items():
-        im = xobj_getimg(obj)
+def _optimize_obj(obj, encode_params):
+    try:
+        xobjs = obj['/Resources']['/XObject']
+    except (KeyError, TypeError):
+        return
+    if not xobjs:
+        return
+    for name, xobj in xobjs.items():
+        im = xobj_getimg(xobj)
         if im is None:
-            continue
-        xobjs[name] = encode_img(im, obj, name, **encode_params)
-        #print(xobjs[name]['/Filter'])
+            _optimize_obj(xobj, encode_params)
+        else:
+            xobjs[name] = encode_img(im, xobj, name, **encode_params)
+            #print(xobjs[name]['/Filter'])
 
 
 def optimize_pdf(filename, output, encode_params, parallel=None):
@@ -133,10 +144,8 @@ def optimize_pdf(filename, output, encode_params, parallel=None):
         futures = []
         completed = 0
         for page in pdf.pages:
-            xobjs = page['/Resources'].get('/XObject')
-            if not xobjs:
-                continue
-            futures.append(executor.submit(_optimize_xobjs, xobjs, encode_params))
+            # _optimize_obj(page, encode_params)
+            futures.append(executor.submit(_optimize_obj, page, encode_params))
         total = len(futures)
         for fut in concurrent.futures.as_completed(futures):
             completed += 1
